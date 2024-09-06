@@ -1,0 +1,144 @@
+Voici la procédure détaillée pour créer un backup sur AWS S3 en utilisant une instance EC2 et un bucket S3. Ce processus inclut la création de l'instance EC2, la configuration des permissions avec IAM, et la création d'un script de backup.
+
+### Étape 1 : Créer un Bucket S3
+
+1. **Accéder à la console AWS S3** :
+   - Connectez-vous à votre compte AWS.
+   - Accédez à la console S3.
+
+2. **Créer un nouveau Bucket** :
+   - Cliquez sur "Create bucket".
+   - Donnez un nom unique à votre bucket (par exemple, `my-backup-bucket`).
+   - Choisissez une région.
+   - Configurez les autres paramètres selon vos besoins, puis cliquez sur "Create bucket".
+
+### Étape 2 : Créer un Rôle IAM
+
+1. **Accéder à la console IAM** :
+   - Dans la console AWS, allez à IAM.
+
+2. **Créer un rôle** :
+   - Cliquez sur "Roles" puis sur "Create role".
+   - Sélectionnez "AWS service" et choisissez "EC2".
+   - Cliquez sur "Next: Permissions".
+
+3. **Attacher des politiques** :
+   - Recherchez et sélectionnez "AmazonS3FullAccess".
+   - Cliquez sur "Next: Tags" puis sur "Next: Review".
+
+4. **Nommer le rôle** :
+   - Donnez un nom à votre rôle (par exemple, `EC2_S3_Backup_Role`).
+   - Cliquez sur "Create role".
+
+### Étape 3 : Lancer une Instance EC2
+
+1. **Accéder à la console EC2** :
+   - Dans la console AWS, allez à EC2.
+
+2. **Lancer une nouvelle instance** :
+   - Cliquez sur "Launch Instance".
+   - Sélectionnez une AMI (par exemple, Amazon Linux 2).
+   - Choisissez un type d'instance (t2.micro est suffisant pour un petit script).
+   - Configurez les détails de l'instance :
+     - Sous "IAM role", sélectionnez le rôle que vous avez créé précédemment.
+   - Configurez le stockage selon vos besoins.
+   - Configurez les groupes de sécurité pour permettre SSH (port 22).
+   - Cliquez sur "Launch" et choisissez une paire de clés pour accéder à l'instance.
+
+### Étape 4 : Se connecter à l'instance EC2
+
+1. **Ouvrir un terminal** :
+   - Connectez-vous à votre instance EC2.
+
+   ```bash
+   ssh -i "your-key.pem" ec2-user@your-public-ip
+   ```
+
+### Étape 5 : Créer le script de backup
+
+1. **Installer `aws-cli`** (si ce n'est pas déjà fait) :
+
+   ```bash
+   sudo yum install aws-cli -y
+   ```
+
+2. **Créer un répertoire pour vos fichiers** :
+
+   ```bash
+   mkdir ~/backup-files
+   ```
+
+3. **Ajouter vos fichiers à ce répertoire** (vous pouvez utiliser `scp` pour copier des fichiers depuis votre machine locale).
+
+4. **Créer le script de backup** :
+
+   ```bash
+   nano ~/backup_script.sh
+   ```
+
+   Ajoutez le code suivant dans le fichier :
+
+   ```bash
+   #!/bin/bash
+
+   # Variables
+   BUCKET_NAME=my-backup-bucket
+   BACKUP_DIR=~/backup-files
+   TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+   ARCHIVE_NAME="backup_$TIMESTAMP.tar.gz"
+
+   # Créer une archive
+   tar -czf $ARCHIVE_NAME -C $BACKUP_DIR .
+
+   # Envoyer l'archive au bucket S3
+   aws s3 cp $ARCHIVE_NAME s3://$BUCKET_NAME/
+
+   # Supprimer les archives locales si nécessaire
+   rm $ARCHIVE_NAME
+
+   # Vérifier le nombre de backups dans S3
+   BACKUP_COUNT=$(aws s3 ls s3://$BUCKET_NAME/ | wc -l)
+
+   # Supprimer les plus anciens si nous avons plus de 4 backups
+   if [ "$BACKUP_COUNT" -gt 4 ]; then
+       aws s3 ls s3://$BUCKET_NAME/ | sort | head -n $(($BACKUP_COUNT - 4)) | awk '{print $4}' | xargs -I {} aws s3 rm s3://$BUCKET_NAME/{}
+   fi
+   ```
+
+   Enregistrez et fermez l'éditeur.
+
+5. **Rendre le script exécutable** :
+
+   ```bash
+   chmod +x ~/backup_script.sh
+   ```
+
+### Étape 6 : Exécuter le script
+
+1. **Tester le script** :
+
+   ```bash
+   ~/backup_script.sh
+   ```
+
+   Vérifiez votre bucket S3 pour voir si les backups ont été correctement téléchargés.
+
+### Étape 7 : Automatiser avec `cron`
+
+1. **Ouvrir le crontab** :
+
+   ```bash
+   crontab -e
+   ```
+
+2. **Ajouter une entrée pour exécuter le script quotidiennement à 2h du matin** :
+
+   ```
+   0 2 * * * /bin/bash ~/backup_script.sh
+   ```
+
+   Enregistrez et fermez l'éditeur.
+
+### Résumé
+
+Vous avez maintenant configuré un système de backup sur AWS S3 avec une instance EC2. Le script effectue une archive des fichiers, les télécharge sur S3, et gère jusqu'à 4 backups en supprimant les plus anciens. Le processus est automatisé avec `cron` pour une exécution quotidienne.
